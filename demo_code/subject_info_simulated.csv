@@ -1,0 +1,11 @@
+subject,indegree_t1,indegree_t2,perceived_t1,perceived_t2,class,middle_school,handedness
+sub1,6,7,-2,8,6,3,R
+sub2,7,3,0,5,1,7,R
+sub3,5,9,-7,-7,2,10,R
+sub4,8,0,-7,2,8,10,R
+sub5,8,1,-3,4,10,4,R
+sub6,2,5,7,1,4,6,L
+sub7,1,9,9,-7,9,5,R
+sub8,7,8,3,0,6,6,R
+sub9,2,4,-5,-8,10,6,L
+sub10,3,4,8,8,4,9,R

@@ -1,0 +1,178 @@
+---
+title: "nc_tutorial"
+author: "Lisa"
+date: "2026-06-12"
+output: html_document
+---
+
+This tutorial includes the codes developed for the main analyses used in the manuscript "Neural Idiosyncrasy Predicts Future Social Disconnectedness", run on simulated datasets with 45 dyads (10 participants) and 5 brain regions. 
+
+The simulated intersubject similarity (ISC) data is in isc_data_simulated.csv and the simulated subject information (i.e., subject ID, indegree popularity as well as perceived popularity at Time 1 and Time 2, class affiliation, middle school affiliation, and handedness) is in subject_info_simulated.csv.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setting up
+```{r Load packages, echo = False}
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(igraph)
+library(RColorBrewer)
+library(gridExtra)
+library(emmeans)
+library(lmerTest)
+library(reshape2)
+library(tidyr)
+```
+
+```{r Read in data, echo=FALSE}
+isc_data <- read.csv("isc_data_simulated.csv") # may need to change path to where the data is saved
+subject_info <- read.csv("subject_info_simulated.csv") # may need to change path to where the data is saved
+```
+
+```{r Recode ISC outliers}
+RecodeOutliersGrouped_df <- function(df, value_col, group_col, new_col = "isc_recoded") {
+  # Rename columns temporarily for processing
+  temp_df <- df[, c(value_col, group_col)]
+  colnames(temp_df) <- c("value", "group")
+  temp_df$index <- seq_len(nrow(temp_df))
+  
+  # Group and recode
+  recoded <- do.call(rbind, lapply(split(temp_df, temp_df$group), function(subdf) {
+    q1 <- quantile(subdf$value, 0.25, na.rm = TRUE)
+    q3 <- quantile(subdf$value, 0.75, na.rm = TRUE)
+    iqr <- IQR(subdf$value, na.rm = TRUE)
+    
+    lower <- q1 - 1.5 * iqr
+    upper <- q3 + 1.5 * iqr
+    
+    subdf$recode_value <- subdf$value
+    subdf$recode_value[subdf$value < lower] <- lower
+    subdf$recode_value[subdf$value > upper] <- upper
+    
+    return(subdf)
+  }))
+  
+  # Restore original order
+  recoded <- recoded[order(recoded$index), ]
+  
+  # Append new column to original df
+  df[[new_col]] <- recoded$recode_value
+  
+  return(df)
+}
+
+isc_recoded <- RecodeOutliersGrouped_df(isc_data, 'isc', 'brain_region')
+```
+
+```{r Combine dataframes}
+dyad_list <- unique(isc_recoded[,c("subject1", "subject2", "brain_region","isc_recoded")])
+dyad_df <- merge(dyad_list, subject_info, by.x = c("subject1"), by.y = c("subject"))
+colnames(dyad_df)[c(5:11)] <- paste("sub1", colnames(dyad_df)[c(5:11)], sep = "_")
+dyad_df <- merge(dyad_df, subject_info, by.x = c("subject2"), by.y = c("subject"))
+colnames(dyad_df)[c(12:18)] <- paste("sub2", colnames(dyad_df)[c(12:18)], sep = "_")
+
+master_df <- dyad_df %>% mutate(
+  dyad_indegree_min_t1 = ifelse(sub1_indegree_t1 > sub2_indegree_t1, sub2_indegree_t1, sub1_indegree_t1),
+  dyad_indegree_min_t2 = ifelse(sub1_indegree_t2 > sub2_indegree_t2, sub2_indegree_t2, sub1_indegree_t2),
+  dyad_perceived_min_t1 = ifelse(sub1_perceived_t1 > sub2_perceived_t1, sub2_perceived_t1, sub1_perceived_t1),
+  dyad_perceived_min_t2 = ifelse(sub1_perceived_t2 > sub2_perceived_t2, sub2_perceived_t2, sub1_perceived_t2),
+  same_class = as.factor(ifelse(sub1_class == sub2_class, 1, 0)),
+  same_middleschool = as.factor(ifelse(sub1_middle_school == sub2_middle_school, 1, 0)),
+  same_handedness = as.factor(ifelse(sub1_handedness == sub2_handedness, 1, 0))
+)
+```
+
+
+```{r Double dataframe}
+double_dataframe <- function(df_to_be_doubled){
+  df_2 <- df_to_be_doubled
+  colnames(df_2)[1:2] <- c("subject1", "subject2")
+  df_doubled <- rbind(df_to_be_doubled, df_2)
+  return(df_doubled)
+}
+
+master_df_doubled <- double_dataframe(master_df)
+```
+
+## ANALYSES
+# Testing if pre-existing neural idiosyncrasy predicts lower future in-degree centrality
+```{r Analysis: testing if pre-existing neural idiosyncrasy predicts lower future in-degree centrality}
+corrected_df_n <- nrow(master_df)/5
+
+func_isc_indeg_min_z <- function(data, corrected_df){
+    md <- summary(lmer(scale(dyad_indegree_min_t2) ~ scale(isc_recoded) + same_class + same_middleschool + same_handedness + (1|subject1) + (1|subject2), data))
+
+  B <- md$coefficients[[2,1]]
+  #df <- md$coefficients[[2,3]]
+  df <- corrected_df - 4
+  p <- md$coefficients[[2,5]]
+  t <- md$coefficients[[2,4]]
+  p_penalized <- 2 * pt(-abs(t), df/2)
+  
+  return(data.frame(B, df, p, p_penalized))
+}
+
+func_isc_indeg_min_z_contr <- function(data, corrected_df){
+    md <- summary(lmer(scale(dyad_indegree_min_t2) ~ scale(isc_recoded) + scale(dyad_indegree_min_t1) + same_class + same_middleschool + same_handedness + (1|subject1) + (1|subject2), data))
+
+  B <- md$coefficients[[2,1]]
+  #df <- md$coefficients[[2,3]]
+  df <- corrected_df - 5
+  p <- md$coefficients[[2,5]]
+  t <- md$coefficients[[2,4]]
+  p_penalized <- 2 * pt(-abs(t), df/2)
+  
+  return(data.frame(B, df, p, p_penalized))
+}
+
+results_isc_indeg_min <- ddply(master_df_doubled, .(brain_region), func_isc_indeg_min_z, corrected_df_n)
+results_isc_indeg_min$corrected_p <- p.adjust(results_isc_indeg_min$p_penalized, method = "fdr")
+results_isc_indeg_min_contr <- ddply(master_df_doubled, .(brain_region), func_isc_indeg_min_z_contr, corrected_df_n)
+results_isc_indeg_min_contr$corrected_p <- p.adjust(results_isc_indeg_min_contr$p_penalized, method = "fdr")
+
+results_isc_indeg_min
+results_isc_indeg_min_contr
+```
+
+# Testing if pre-existing neural idiosyncrasy predicts lower future perceived popularity
+```{r Analysis: testing if pre-existing neural idiosyncrasy predicts lower future perceived popularity}
+corrected_df_n <- nrow(master_df)/5
+
+func_isc_perceived_min_z <- function(data, corrected_df){
+    md <- summary(lmer(scale(dyad_perceived_min_t2) ~ scale(isc_recoded) + same_class + same_middleschool + same_handedness + (1|subject1) + (1|subject2), data))
+
+  B <- md$coefficients[[2,1]]
+  #df <- md$coefficients[[2,3]]
+  df <- corrected_df - 4
+  p <- md$coefficients[[2,5]]
+  t <- md$coefficients[[2,4]]
+  p_penalized <- 2 * pt(-abs(t), df/2)
+  
+  return(data.frame(B, df, p, p_penalized))
+}
+
+func_isc_perceived_min_z_contr <- function(data, corrected_df){
+    md <- summary(lmer(scale(dyad_perceived_min_t2) ~ scale(isc_recoded) + scale(dyad_perceived_min_t1) + same_class + same_middleschool + same_handedness + (1|subject1) + (1|subject2), data))
+
+  B <- md$coefficients[[2,1]]
+  #df <- md$coefficients[[2,3]]
+  df <- corrected_df - 5
+  p <- md$coefficients[[2,5]]
+  t <- md$coefficients[[2,4]]
+  p_penalized <- 2 * pt(-abs(t), df/2)
+  
+  return(data.frame(B, df, p, p_penalized))
+}
+
+results_isc_perceived_min <- ddply(master_df_doubled, .(brain_region), func_isc_perceived_min_z, corrected_df_n)
+results_isc_perceived_min$corrected_p <- p.adjust(results_isc_perceived_min$p_penalized, method = "fdr")
+results_isc_perceived_min_contr <- ddply(master_df_doubled, .(brain_region), func_isc_perceived_min_z_contr, corrected_df_n)
+results_isc_perceived_min_contr$corrected_p <- p.adjust(results_isc_perceived_min_contr$p_penalized, method = "fdr")
+
+results_isc_perceived_min
+results_isc_perceived_min_contr
+```
+
